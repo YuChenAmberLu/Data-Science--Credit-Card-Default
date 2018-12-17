@@ -50,12 +50,6 @@ ftable(CreditCard$SEX, CreditCard$EDUCATION, CreditCard$MARRIAGE)
 ##### but have not included in this assignment.
 
 summary(CreditCard)
-
-
-```
-
-```{r}
-
 ```
 
 
