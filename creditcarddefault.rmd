@@ -1,0 +1,503 @@
+
+I downloaded "Default of Credit Card Clients Dataset" from _https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients#_.
+
+### About the data:
+> This dataset contains information on default payments, demographic factors, credit data, history of payment, and bill statements of credit card clients in Taiwan from April 2005 to September 2005. 
+
+### About the variables:
+(@) ID: ID of each client
+(@) LIMIT_BAL: Amount of given credit in NT dollars (includes individual and family/supplementary credit
+(@) SEX: Gender (1=male, 2=female)
+(@) EDUCATION: (1=graduate school, 2=university, 3=high school, 4=others, 5=unknown, 6=unknown)
+(@) MARRIAGE: Marital status (1=married, 2=single, 3=others)
+(@) AGE: Age in years
+(@) PAY_0: Repayment status in September, 2005 (-1=pay duly, 1=payment delay for one month, 2=payment delay for two months, ... 8=payment delay for eight months, 9=payment delay for nine months and above)
+(@) PAY_2: Repayment status in August, 2005 (scale same as above)
+(@) PAY_3: Repayment status in July, 2005 (scale same as above)
+(@) PAY_4: Repayment status in June, 2005 (scale same as above)
+(@) PAY_5: Repayment status in May, 2005 (scale same as above)
+(@) PAY_6: Repayment status in April, 2005 (scale same as above)
+(@) BILL_AMT1: Amount of bill statement in September, 2005 (NT dollar)
+(@) BILL_AMT2: Amount of bill statement in August, 2005 (NT dollar)
+(@) BILL_AMT3: Amount of bill statement in July, 2005 (NT dollar)
+(@) BILL_AMT4: Amount of bill statement in June, 2005 (NT dollar)
+(@) BILL_AMT5: Amount of bill statement in May, 2005 (NT dollar)
+(@) BILL_AMT6: Amount of bill statement in April, 2005 (NT dollar)
+(@) PAY_AMT1: Amount of previous payment in September, 2005 (NT dollar)
+(@) PAY_AMT2: Amount of previous payment in August, 2005 (NT dollar)
+(@) PAY_AMT3: Amount of previous payment in July, 2005 (NT dollar)
+(@) PAY_AMT4: Amount of previous payment in June, 2005 (NT dollar)
+(@) PAY_AMT5: Amount of previous payment in May, 2005 (NT dollar)
+(@) PAY_AMT6: Amount of previous payment in April, 2005 (NT dollar)
+(@) default.payment.next.month: Default payment (1=yes, 0=no)
+
+### Citation:
+Yeh, I. C., & Lien, C. H. (2009). The comparisons of data mining techniques for the predictive accuracy of probability of default of credit card clients. Expert Systems with Applications, 36(2), 2473-2480.
+
+### Objective: 
+> To find out the best fit algorithm for amount of given credit in NT dollars against other factors, which are important variables using Bayesian information criterion. 
+
+> There are 24 factors against amount of given credit. In order to aviod overfitting, I selected the most important factors using Bayesian information criterion (BIC) for model selection because this model gives unnecessary variable much greater penalty. 
+
+```{r Load Data}
+
+CreditCard = read.csv(file="UCI_Credit_Card.csv", header=TRUE)
+head(CreditCard)
+
+ftable(CreditCard$SEX, CreditCard$EDUCATION, CreditCard$MARRIAGE) 
+## We can see some unknown data and 0 in this data set 
+##### Note. can do predict for those missing data set as well, 
+##### but have not included in this assignment.
+
+summary(CreditCard)
+
+
+```
+
+```{r}
+
+```
+
+
+```{r}
+# Data Cleaning 
+# Remove rows with Education=0,5,6 and MARRIAGE=0,3 and LIMIT_BAL,SEX,AGE=0
+without0 = apply(CreditCard,1, function(x) all(x[2:6]!=0) && x[4]!=5 && x[4]!=6 && x[5]!=3)
+CreditCard = CreditCard[without0,]
+```
+
+
+```{r Set Data Sets and Factors Selection}
+
+# Set up the 70% for train set and the rest of 30% for test set
+train = round(nrow(CreditCard) * 0.7,0)
+train = sample(nrow(CreditCard) ,train)
+CreditCard.train = CreditCard[train, ]
+CreditCard.test = CreditCard[-train, ]
+
+# Determine which parameters are more important using forward selection 
+library(leaps)
+Forward = regsubsets(LIMIT_BAL ~., data = CreditCard.train, method="forward", 
+                     nvmax=length(CreditCard)-1)
+Forward.summary = summary(Forward)
+
+# Determine how many paramenters will be used using **Bayesian Information Criterion (BIC)**
+plot(Forward.summary$bic,type='b',col="blue", pch=19, xlab = "Number of Variables") 
+points(which.min(Forward.summary$bic), Forward.summary$bic[which.min(Forward.summary$bic)], 
+       col="red", pch=19)
+
+# List all improtant parameters using BIC
+GetColumn = t(Forward.summary$which)[,which.min(Forward.summary$bic)]
+## Remove LIMIT_BAL from column names because LIMIT_BAL is the response of regression
+NameCol = names(CreditCard)[-2] 
+NameCol[GetColumn[2:length(CreditCard)]] 
+## I pick 18 parameters, which has the minimum error using bic 
+
+```
+
+```{r Algorithm for Q2}
+
+formulaQ2 = as.formula(LIMIT_BAL ~ .-ID-SEX-PAY_5-BILL_AMT3-BILL_AMT4-BILL_AMT6)
+# Logistic Regression
+# Based on most important 20 paramenters using **bic**
+fit.lm = lm(formulaQ2, data = CreditCard.train)
+# Predict 
+yhat.lm = predict(fit.lm, CreditCard.test)
+
+# Test MSE
+mse_lm = round(mean((yhat.lm - CreditCard.test$LIMIT_BAL)^2), 4)
+paste("The test MSE using linear regession is", mse_lm)
+
+##################################################################################
+# Lasso and Elastic-Net Regularized Generalized Linear Models
+library(glmnet)
+
+tryalpha = seq(0,1,0.1)
+x.train = model.matrix(formulaQ2, data = CreditCard.train)
+x.test = model.matrix(formulaQ2, data = CreditCard.test)
+y = CreditCard.train$LIMIT_BAL
+
+mse_glmnet = rep(NA, length(tryalpha))
+for (i in 1:length(tryalpha)){
+
+  fit.glmnet = glmnet(x.train, y, alpha = tryalpha[i])
+  pred.glmnet = predict(fit.glmnet, s = 0.01, newx = x.test)
+  mse_glmnet[i] = round(mean((pred.glmnet - CreditCard.test$LIMIT_BAL)^2), 4)
+
+}
+plot(tryalpha, mse_glmnet, xlab = "Alpha", ylab = "Test Mean-Squared Errors",
+     main = "Test MSE using Regularized Generalized Linear Models")
+
+# Test MSE
+# Lasso and Elastic-Net Regularized Generalized Linear Models (glmnet)
+paste("The lowest test MSE using glmnet is", 
+      min(mse_glmnet), "with alpha =", 
+      tryalpha[which.min(mse_glmnet)], "as alpha is in [0, 1]")
+
+##################################################################################
+# Tree
+library(tree)
+
+# Fit a regression tree to the training set
+fit.tree = tree(formulaQ2, data = CreditCard.train)
+
+# Plot the tree
+plot(fit.tree)
+text(fit.tree, pretty = 0)
+title("Decision Tree of Amount of Given Credit (LIMIT_BAL)")
+
+# Test MSE
+tree.pred = predict(fit.tree, newdata = CreditCard.test)
+mse.tree = mean((tree.pred - CreditCard.test$LIMIT_BAL)^2)
+print (paste("The test MSE using tree is", round(mse.tree,4) ))
+
+##################################################################################
+# Random Forest
+library(randomForest)
+
+# Use the bagging approach
+trymtry = seq(10,16,2) # (which.min(Forward.summary$bic)-1)
+
+mse.bag = rep(NA, length(trymtry))
+for (i in 1:length(trymtry)){
+  
+  fit.bag = randomForest(formulaQ2, data = CreditCard.train, mtry = i, 
+                         ntree = 500, importance = TRUE)
+  yhat.bag = predict(fit.bag, newdata = CreditCard.test)
+  mse.bag[i] = round(mean((yhat.bag - CreditCard.test$LIMIT_BAL)^2),4)
+
+}
+
+plot(trymtry, mse.bag, type = "b", xlab = "Number of variables", ylab = "Test MSE",
+     main = "Test MSE using Bagging Approach")
+paste("The lowest test MSE using bagging is", 
+      min(mse.bag), "with mtry =", 
+      which.min(mse.bag), "as mtry is in [10, 15]")
+
+
+##################################################################################
+# Generalized Boosted Regression Models
+library(gbm)
+
+# Give shrinkage parameters 'lambda'
+lambdas = 10^seq(0, 0.2, by = 0.001)
+test.err = rep(NA, length(lambdas))
+for (i in 1:length(lambdas)) {
+  
+    boost.Limitbal = gbm(formulaQ2, data = CreditCard.train, distribution = "gaussian", 
+                         n.trees = 1000, shrinkage = lambdas[i])
+    yhat = predict(boost.Limitbal, CreditCard.test, n.trees = 1000)
+    test.err[i] = mean((yhat - CreditCard.test$LIMIT_BAL)^2)
+}
+
+# Plot with different shrinkage parameters on the x-axis 
+# and the corresponding training set MSE on the y-axis
+plot(lambdas, test.err, type = "b", xlab = "Shrinkage values", ylab = "Test MSE",
+     main = "Test MSE using Boosting Algorithm")
+
+mse_boosting = round(min(test.err), 4)
+paste("The test MSE using boosting is", mse_boosting)
+
+```
+```{r}
+# Multiple boosting libraries 
+# gbm: boosting with tree
+# mboost: model based boosting 
+# ada: statistical boosted based on additive logistic regression
+# gamBoost: for boosting generlized additive models
+library(caret) #  Classification And REgression Training) 
+library(rlang)
+library(doSNOW)
+
+fit.gbm.caret = train(formulaQ2, method="gbm",  data = CreditCard.train, verbose=FALSE)
+yhat.gbm = predict(fit.gbm.caret, newdata = CreditCard.test)
+qplot(yhat.gbm, LIMIT_BAL, CreditCard.test )
+
+ggplot(CreditCard.test) + aes(x = yhat.gbm, y = LIMIT_BAL) + geom_point() 
+```
+
+
+
+```{r Compared Accuracy for Q2}
+Q2_accuracy = data.frame("Test MSE"=c( mse_lm, min(mse_glmnet), 
+                                  mse.tree, min(mse.bag), mse_boosting))
+rownames(Q2_accuracy) = c("lm", "glmnet", "tree", "bag", "boosting")
+Q2_accuracy
+
+```
+
+> I did machine leanring on this credit card dataset using five algorithms, including linear regression (lm), Lasso and Elastic-Net Regularized Generalized Linear Models (glmnet), tree, bagging, and boosting. From the test MSE table, we can see linear regression is not a good fit for our credit card dataset to predict limit balance, even shrinking the coefficients $\alpha$ from 0 to 1. Among these five algorithms, bagging approach has the lowest test MSE. It is because bagging approach (Bootstrap aggregation) can reduce the variance and hence decrease the prediction mean-squared errors of a statistical learning method. Also, it takes many training sets from the population and build a separate prediction model using each training set. Then we average the resulting predictions. Thus, the test MSE is lower than the one using tree method.
+
+> And then, I do the same process on default.payment.next.month against others factors.
+
+```{r Predictor Selection}
+
+# Determine which parameters are more important using forward selection 
+Forward = regsubsets(default.payment.next.month ~., data = CreditCard.train, 
+                     method="forward", nvmax=length(CreditCard)-1)
+Forward.summary = summary(Forward)
+
+# Determine how many paramenters will be used using **Bayesian Information Criterion (BIC)**
+plot(Forward.summary$bic,type='b',col="blue", pch=19, xlab = "Number of Variables") 
+points(which.min(Forward.summary$bic), 
+       Forward.summary$bic[which.min(Forward.summary$bic)], 
+       col="red", pch=19)
+
+# List all improtant parameters using BIC
+names(CreditCard) [t(Forward.summary$which)[,which.min(Forward.summary$bic)]
+                   [2:length(CreditCard)]] 
+## I pick 8 parameters, which has the minimum error using bic 
+```
+
+
+```{r Algorithm for Q3}
+
+# Generalized Linear Model with Logistic Regression
+fit.glm = glm(default.payment.next.month~LIMIT_BAL+MARRIAGE+AGE+PAY_0+PAY_2+PAY_3+
+                  BILL_AMT1+PAY_AMT1, data = CreditCard.train, family = binomial)
+
+fit.glm = glm(default.payment.next.month~MARRIAGE+PAY_0+PAY_2+PAY_5+
+                  BILL_AMT1+PAY_AMT1, data = CreditCard.train, family = binomial)
+
+# Predict 
+pred.prob = predict(fit.glm, CreditCard.test, type = "response")
+pred.glm = rep(0, length(pred.prob))
+pred.glm[pred.prob > 0.5] = 1
+pred.table = table(pred.glm, CreditCard.test$default.payment.next.month)
+pred.table
+
+# Sensitivity: TP/P = TPR
+Sensitivity = pred.table[1,1] / sum(pred.table[,1])
+# Specificity: TN/N = TNR
+Specificity = pred.table[2,2] / sum(pred.table[,2])
+# Accuracy: (TP + TN)/(P + N)
+Accuracy = sum(pred.table[1,1], pred.table[2,2]) / sum(pred.table[,])
+# Total Error Rate: (FP + FN)/(P + N)
+TotalError = sum(pred.table[1,2],pred.table[2,1]) / sum(pred.table[,])
+
+glm.Confusion = data.frame(Sensitivity, Specificity, Accuracy, TotalError)
+row.names(glm.Confusion) = "GLM"
+
+paste("The accuracy using Logistic regression is", round(Accuracy,4))
+
+######################################################################################
+# Linear Discriminant Analysis (LDA)
+library(MASS)
+
+fit.lda = lda(default.payment.next.month~LIMIT_BAL+MARRIAGE+AGE+PAY_0+PAY_2+PAY_3+
+                  BILL_AMT1+PAY_AMT1, data = CreditCard.train)
+
+# Predict default.payment.next.month in tesing data set
+pred.prob.lda = predict(fit.lda, CreditCard.test)
+
+# Predict table
+pred.table.lda = table(pred.prob.lda$class, CreditCard.test$default.payment.next.month)
+pred.table.lda
+
+# Sensitivity: TP/P = TPR
+Sensitivity = pred.table.lda[1,1] / sum(pred.table.lda[,1])
+# Specificity: TN/N = TNR
+Specificity = pred.table.lda[2,2] / sum(pred.table.lda[,2])
+# Accuracy: (TP + TN)/(P + N)
+Accuracy = sum(pred.table.lda[1,1],pred.table.lda[2,2]) / sum(pred.table.lda[,])
+# Total Error Rate: (FP + FN)/(P + N)
+TotalError = sum(pred.table.lda[1,2],pred.table.lda[2,1]) / sum(pred.table.lda[,])
+
+lda.Confusion = data.frame(Sensitivity, Specificity, Accuracy, TotalError)
+row.names(lda.Confusion) = "LDA"
+
+paste("The accuracy using LDA is", round(Accuracy,4))
+
+######################################################################################
+# Quadratic discriminant analysis (QDA)
+fit.qda = qda(default.payment.next.month~LIMIT_BAL+MARRIAGE+AGE+PAY_0+PAY_2+PAY_3+
+                  BILL_AMT1+PAY_AMT1, data = CreditCard.train)
+
+# Predict default.payment.next.month in tesing data set
+pred.prob.qda = predict(fit.qda, CreditCard.test)
+
+# Predict table
+pred.table.qda = table(pred.prob.qda$class, CreditCard.test$default.payment.next.month)
+pred.table.qda
+
+# Sensitivity: TP/P = TPR
+Sensitivity = round(pred.table.qda[1,1] / sum(pred.table.qda[,1]),4)
+# Specificity: TN/N = TNR
+Specificity = round(pred.table.qda[2,2] / sum(pred.table.qda[,2]),4)
+# Accuracy: (TP + TN)/(P + N)
+Accuracy = round(sum(pred.table.qda[1,1],
+                     pred.table.qda[2,2]) / sum(pred.table.qda[,]),4)
+# Total Error Rate: (FP + FN)/(P + N)
+TotalError = round(sum(pred.table.qda[1,2],
+                       pred.table.qda[2,1]) / sum(pred.table.qda[,]),4)
+
+qda.Confusion = data.frame(Sensitivity, Specificity, Accuracy, TotalError)
+row.names(qda.Confusion) = "QDA"
+
+paste("The accuracy using QDA is", Accuracy)
+
+######################################################################################
+# K-nearest neighbors algorithm
+library(class)
+library(data.table)
+library(dplyr)
+
+CreditCard.bic = select(CreditCard, LIMIT_BAL,MARRIAGE,AGE,PAY_0,PAY_2,PAY_3,BILL_AMT1,PAY_AMT1)
+
+# Set up the 70% for train set and the rest of 30% for test set
+train = round(nrow(CreditCard) * 0.7,0)
+train = sample(nrow(CreditCard) ,train)
+CreditCard.bic.train = CreditCard.bic[train, ]
+CreditCard.bic.test = CreditCard.bic[-train, ]
+
+pred.tables.knn = table(NULL)
+Accuracy.knn.table = table(NULL)
+for(K in 6:25){
+  set.seed(personal)
+  pred.knn = knn(CreditCard.bic.train, CreditCard.bic.test, 
+                 CreditCard.train$default.payment.next.month, k = K)
+  pred.table.knn = table(pred.knn, CreditCard.test$default.payment.next.month)
+  Accuracy = round(sum( pred.table.knn[1,1],
+                        pred.table.knn[2,2] ) / sum(pred.table.knn[,]),4)
+  
+  # rbind Accuracy table and Confusion table for K=1,2,3
+  Accuracy.knn.table = rbind(Accuracy.knn.table, Accuracy)
+  pred.tables.knn = rbind(pred.tables.knn, pred.table.knn)
+  
+}
+
+# Convert pred.tables.knn from **matrix** into **data.table**
+predicts = rownames(pred.tables.knn)
+pred.tables.knn = data.table(pred.tables.knn)
+
+# Create two columns for the predictions and K, respectively
+pred.tables.knn$Predicts = predicts
+pred.tables.knn$K = rep(6:25, each=2) 
+
+# Swith the order of columns
+pred.tables.knn = pred.tables.knn[,c(4,3, 1:2)]
+
+# Rename the rows and columns of the Accuracy table
+rownames(Accuracy.knn.table) = c("K=6", "K=7", "K=8", "K=9", "K=10", "K=11", "K=12", 
+                                 "K=13", "K=14", "K=15", "K=16", "K=17", "K=18", 
+                                 "K=19", "K=20", "K=21", "K=22", "K=23", "K=24", "K=25")
+colnames(Accuracy.knn.table) = "Accurancy"
+
+# Plot the accuracy as K = [6,25]
+plot(x=seq(6,25), y=Accuracy.knn.table, xlab = "K", ylab = "Accuracy (%)",
+     main = "Accuracy using KNN")
+paste("The highest accuracy using KNN is", max(Accuracy.knn.table), " with K =",
+      which.max(Accuracy.knn.table))
+
+######################################################################################
+# Generalized Additive Model
+library(gam)
+fit.gam = gam(default.payment.next.month~LIMIT_BAL+MARRIAGE+AGE+PAY_0+PAY_2+PAY_3+
+                  BILL_AMT1+PAY_AMT1, data = CreditCard.train)
+
+# Predict the out-of-state tuition using test set
+pred.prob.gam = predict(fit.gam, CreditCard.test)
+pred.gam = rep(0, length(pred.prob.gam))
+pred.gam[pred.gam > 0.5] = 1
+pred.table.gam = table(pred.gam, CreditCard.test$default.payment.next.month)
+pred.table.gam
+pred.table.gam.Accuracy = round(pred.table.gam[1] / length(pred.prob.gam),4)
+paste("The accuracy of Generalized Additive Model is", pred.table.gam.Accuracy)
+
+######################################################################################
+# Tree
+# Fit a regression tree to the training set
+fit.tree = tree(default.payment.next.month~LIMIT_BAL+MARRIAGE+AGE+PAY_0+PAY_2+PAY_3+
+                  BILL_AMT1+PAY_AMT1, data = CreditCard.train)
+
+# Plot the tree
+plot(fit.tree)
+text(fit.tree, pretty = 0)
+title("Decision Tree of Credit Default (default.payment.next.month)")
+
+# Predict default.payment.next.month in tesing data set
+pred.prob.tree = predict(fit.tree, CreditCard.test)
+
+# Use default.payment.next.month to test the model accuracy
+pred.tree = rep(0, length(pred.prob.tree))
+pred.tree[pred.prob.tree > 0.5] = 1
+pred.table.tree = table(pred.tree, CreditCard.test$default.payment.next.month)
+pred.table.tree
+
+# Sensitivity: TP/P = TPR
+Sensitivity = pred.table.tree[1,1] / sum(pred.table.tree)
+# Specificity: TN/N = TNR
+Specificity = pred.table.tree[2,2] / sum(pred.table.tree[,2])
+# Accuracy: (TP + TN)/(P + N)
+Accuracy = sum(pred.table.tree[1,1], pred.table.tree[2,2]) / sum(pred.table.tree)
+# Total Error Rate: (FP + FN)/(P + N)
+TotalError = sum(pred.table.tree[1,2], pred.table.tree[2,1]) / sum(pred.table.tree[,])
+
+tree.Confusion = data.frame(Sensitivity, Specificity, Accuracy, TotalError)
+row.names(tree.Confusion) = "Tree"
+
+paste("The accuracy of Tree is", round(Accuracy,4))
+
+######################################################################################
+# Random Forest:
+# In random forests data is resampled from the the train set for as many trees as in the forest 
+# (default is 500 in R). 
+# Since the respons are only have two unique values,
+# it is not enough for the random forest to create unique trees. 
+# Thus, I won't use Random Forest to do prediction.  
+
+######################################################################################
+# Lasso and Elastic-Net Regularized Generalized Linear Models
+# Fit a regression tree to the training set
+x.train = model.matrix(default.payment.next.month~LIMIT_BAL+MARRIAGE+AGE+PAY_0+PAY_2+PAY_3+
+                  BILL_AMT1+PAY_AMT1, data = CreditCard.train)
+x.test = model.matrix(default.payment.next.month~LIMIT_BAL+MARRIAGE+AGE+PAY_0+PAY_2+PAY_3+
+                  BILL_AMT1+PAY_AMT1, data = CreditCard.test)
+
+tryalpha = seq(0,1,0.1)
+acc_glmnet = rep(NA, length(tryalpha))
+for (i in 1:length(tryalpha)){
+  
+  fit.glmnet = glmnet(x.train, CreditCard.train$default.payment.next.month, alpha = tryalpha[i])
+  pred.prob.glmnet = predict(fit.glmnet, s = 0.01, newx = x.test)
+  
+  # Use default.payment.next.month to test the model accuracy
+  pred.glmnet = rep(0, length(pred.prob.glmnet))
+  pred.glmnet[pred.prob.glmnet > 0.5] = 1
+  pred.table.glmnet = table(pred.glmnet, CreditCard.test$default.payment.next.month)
+  pred.table.glmnet
+  
+  # Sensitivity: TP/P = TPR
+  Sensitivity = pred.table.glmnet[1,1] / sum(pred.table.glmnet)
+  # Specificity: TN/N = TNR
+  Specificity = pred.table.glmnet[2,2] / sum(pred.table.glmnet[,2])
+  # Accuracy: (TP + TN)/(P + N)
+  Accuracy = sum(pred.table.glmnet[1,1], pred.table.glmnet[2,2]) / sum(pred.table.glmnet[,])
+  # Total Error Rate: (FP + FN)/(P + N)
+  TotalError = sum(pred.table.glmnet[1,2], pred.table.glmnet[2,1]) / sum(pred.table.glmnet[,])
+
+  glmnet.Confusion = data.frame(Sensitivity, Specificity, Accuracy, TotalError)
+  acc_glmnet[i] = glmnet.Confusion$Accuracy
+}
+plot(tryalpha, acc_glmnet, xlab = "Alpha", ylab = "Accuracy (%)", 
+     main = "Accuracy using Regularized Generalized Linear Models")
+  
+paste("The highest accuracy using glmnet is", 
+      max(acc_glmnet), "with alpha =", 
+      tryalpha[which.max(acc_glmnet)], "as alpha is in [0, 1]")
+
+```
+
+```{r Compared Accuracy for Q3}
+
+Q3_accuracy = data.frame("Accuracy"= c( glm.Confusion$Accuracy, lda.Confusion$Accuracy,
+                              qda.Confusion$Accuracy, max(Accuracy.knn.table),
+                              pred.table.gam.Accuracy, tree.Confusion$Accuracy,
+                              max(acc_glmnet)))
+rownames(Q3_accuracy) = c("glm", "lda", "qda", "KNN", "gam", "tree", "glmnet" )
+Q3_accuracy
+
+# From these seven algorithms, Tree has the highest accuracy. 
+```
+
+> I did machine leanring on this credit card dataset using seven algorithms, including generalized linear model (glm), Linear and Quadratic Discriminant Analysis, k-nearest neighbors, Generalized additive model, tree, and Lasso and Elastic-Net Regularized Generalized Linear Models. From the accuracy table, the possibility of credit card default next month against other factors is near linear relation and has clear feature on repayment status of the previous two months. Thus, the accuracy of decision tree is the highest, and lda is the second highest.
