@@ -1,8 +1,8 @@
-# Default of Credit Card Clients 
+# Analysis of Default of Credit Card Clients against their background
 
 Analysis of credit card cardholders' background using Machine Learning on both quantitative and qualitative responses. This dataset contains information on default payments, demographic factors, credit data, history of payment, and bill statements of credit card clients in Taiwan from April 2005 to September 2005.
 
-## Initial analysis
+## Exploratory Data Analysis
 
 
 ## Quantitative factors as responses
