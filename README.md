@@ -13,11 +13,11 @@ Machine learning on amount of given credit in NT dollars against other factors.
 
 There are 24 factors against amount of given credit. In order to aviod overfitting, I selected the most important factors using forward stepwise selection and chose Bayesian Information Criterion (BIC) for determining the cross-validated prediction error. The Bayesian Information Criterion (BIC) gives unnecessary variable much greater penalty, so it can more efficient to aviod overfitting. 
 
-Five algorithms and the packages used:
+Five algorithms and the libraries used:
 
 <center>
   
-|               Algorithms                                |         Packages      |
+|               Algorithms                                |        Libraries      |
 |-------------------------------------------------------- | :-------------------: |
 | Linear regression                                       | lm                    |
 | Regularized generalized linear models                   | glmnet                |
@@ -33,11 +33,11 @@ Machine learning on whether the payment defaults next month against other factor
 
 And then, I did the same process on whether clients default payment next month against others factors.
 
-Seven algorithms and the packages used:
+Seven algorithms and the libraries used:
 
 <center>
 
-|               Algorithms                                |         Packages      |
+|               Algorithms                                |        Libraries      |
 |-------------------------------------------------------- | :-------------------: |
 | Generalized linear model                                | glm                   |
 |Linear discriminant analysis - LDA                       | MASS                  |
