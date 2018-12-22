@@ -1,17 +1,37 @@
+---
+title: "Analysis of Credit Card Default Against Cardholders' Background"
+author: "Yu-Chen (Amber) Lu"
+date: '`r paste("Date:",Sys.Date())`'
+output: pdf_document
+---
 
-I downloaded "Default of Credit Card Clients Dataset" from _https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients#_.
+## Abstract
+To find out the best fit algorithm for amount of given credit in NT dollars against other factors, 
+which are important variables using Bayesian information criterion. 
 
-### About the data:
-> This dataset contains information on default payments, demographic factors, credit data, history of payment, and bill statements of credit card clients in Taiwan from April 2005 to September 2005. 
+## 0. Introduction
+High credit card default rate can make a business in trouble even bankrupt. The propose of this 
+project is to predict whether a cilent defaults on her/his credit card, the business can underwrite 
+credit cards more carefully to the potential clients who cannot pay bills with high probability. 
 
-### About the variables:
-(@) ID: ID of each client
+In order to get more insight of this dataset, I did exploratory data analysis using `ggplot2`. 
+Another perceptive of this project is to predict the limit balance of a credit card. Thus, I used 
+"Default of Credit Card Clients Dataset", which was downloaded from 
+https://archive.ics.uci.edu/ml/machine-learning-databases/00350/.
+
+> ### 1) About the data
+> This dataset contains information on default payments, demographic factors, credit data, history 
+of payment, and bill statements of credit card clients in Taiwan from April 2005 to September 2005. 
+
+> ### 2) About the variables
+> (@) ID: ID of each client
 (@) LIMIT_BAL: Amount of given credit in NT dollars (includes individual and family/supplementary credit
 (@) SEX: Gender (1=male, 2=female)
 (@) EDUCATION: (1=graduate school, 2=university, 3=high school, 4=others, 5=unknown, 6=unknown)
 (@) MARRIAGE: Marital status (1=married, 2=single, 3=others)
 (@) AGE: Age in years
-(@) PAY_0: Repayment status in September, 2005 (-1=pay duly, 1=payment delay for one month, 2=payment delay for two months, ... 8=payment delay for eight months, 9=payment delay for nine months and above)
+(@) PAY_0: Repayment status in September, 2005 (-1=pay duly, 1=payment delay for one month, 
+2=payment delay for two months, ... 8=payment delay for eight months, 9=payment delay for nine months and above)
 (@) PAY_2: Repayment status in August, 2005 (scale same as above)
 (@) PAY_3: Repayment status in July, 2005 (scale same as above)
 (@) PAY_4: Repayment status in June, 2005 (scale same as above)
@@ -31,37 +51,283 @@ I downloaded "Default of Credit Card Clients Dataset" from _https://archive.ics.
 (@) PAY_AMT6: Amount of previous payment in April, 2005 (NT dollar)
 (@) default.payment.next.month: Default payment (1=yes, 0=no)
 
-### Citation:
-Yeh, I. C., & Lien, C. H. (2009). The comparisons of data mining techniques for the predictive accuracy of probability of default of credit card clients. Expert Systems with Applications, 36(2), 2473-2480.
+> ### 3) Citation
+> Yeh, I. C., & Lien, C. H. (2009). The comparisons of data mining techniques for the predictive 
+accuracy of probability of default of credit card clients. Expert Systems with Applications, 36(2), 2473-2480.
 
-### Objective: 
-> To find out the best fit algorithm for amount of given credit in NT dollars against other factors, which are important variables using Bayesian information criterion. 
+> ### 4) Library sources
 
-> There are 24 factors against amount of given credit. In order to aviod overfitting, I selected the most important factors using Bayesian information criterion (BIC) for model selection because this model gives unnecessary variable much greater penalty. 
+```{r}
 
-```{r Load Data}
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(leaps)
+library(glmnet)
+library(tree)
+library(randomForest)
+library(gbm)
+library(MASS)
+library(class)
+library(data.table)
+library(gam)
+
+set.seed(1)
+```
+
+
+## 1. Exploratory Data Analysis
+
+```{r}
 
 CreditCard = read.csv(file="UCI_Credit_Card.csv", header=TRUE)
+# names(CreditCard) = sapply(names(CreditCard), tolower)
 head(CreditCard)
+glimpse(CreditCard)
+
+# Get some plots of the data set
+CreditCard_plot = CreditCard
+CreditCard_plot$LIM_cut = cut(as.numeric(as.character(CreditCard_plot$LIMIT_BAL)), 
+                              c((0:8)*130000), right = FALSE, 
+                              labels = c("0-130K", "130K-260K", "260K-390K", 
+                                         "390K-520K", "520K-650K", "650K-780K",
+                                         "780K-910K", "910K-1040K")) # Categorize LIMIT_BAL
+CreditCard_plot$Age_cut = cut(as.numeric(as.character(CreditCard_plot$AGE)), 
+                              c(seq(20,80,10)), right = FALSE) # Categorize Defualt Rate
+
+# Convert format
+CreditCard_plot$default.payment.next.month = 
+  as.character(CreditCard_plot$default.payment.next.month)
+CreditCard_plot$EDUCATION = as.character(CreditCard_plot$EDUCATION)
+
+# Plot 1 --------------------------------------------------------------------------
+ggplot(data=CreditCard_plot, aes(LIM_cut, Age_cut)) +
+  geom_bar(stat = "identity", aes(fill = Age_cut), position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs( title = "Age and Limit Balance Catagories", x = "Limit Balance Catagories (NTD)", 
+        y = "Age Catagories (Years)")
+## Comment: Middle ages have higher amount of given credit in NT dollars
+
+
+# Plot 2 --------------------------------------------------------------------------
+# The original dataset in default.payment.next.month column shows 0 and 1, 
+# which mean credit card does not default and do default respectively. 
+# It is not so clear for someone who does not know this dataset, 
+# so I changed the labels of default.payment.next.month on the plot
+
+# First, given a list for converting the labels 
+default_names = list('0' ="No Default", '1'= "Default")
+
+# Then, define a labeller to convert labels of default.payment.next.month
+default_labeller = function(variable,value){
+  return(default_names[value])
+}
+
+ggplot(data=CreditCard_plot, aes(x=AGE)) + 
+  geom_histogram(binwidth=.5, colour="black", fill="white") + 
+  facet_grid(default.payment.next.month ~., labeller=default_labeller) +
+  geom_vline(data=CreditCard_plot, aes(xintercept=mean(AGE, na.rm=T)), 
+             linetype="dashed", size=1, colour="red") +
+  labs(title = "Histogram of Age and Credit Card Default", x = "Age (Years)",
+       y = "Count", tag = "B")
+## Comment: The bar charts shows it is lower percentage of credit card default 
+##          for people between age 25 and age 40. Also, most of the clients are 
+##          between age 25 and age 35.
+
+# Plot 3 --------------------------------------------------------------------------
+CreditCard_plot2 = CreditCard_plot
+CC_Default = CreditCard_plot$default.payment.next.month
+CreditCard_plot2$default.payment.next.month[CC_Default=="1"] = "Default"
+CreditCard_plot2$default.payment.next.month[CC_Default=="0"] = "No Default"
+CreditCard_plot2$SEX[CreditCard_plot$SEX=="1"] = "Male"
+CreditCard_plot2$SEX[CreditCard_plot$SEX=="2"] = "Female"
+
+ggplot(data=CreditCard_plot2, aes(x=AGE)) + 
+  geom_histogram(binwidth=.5, colour="black", fill="white") + 
+  facet_grid(default.payment.next.month ~SEX) +
+  geom_vline(data=CreditCard_plot2, aes(xintercept=mean(AGE, na.rm=T)), 
+             linetype="dashed", size=1, colour="red") +
+  labs(title = "Histogram of Age, Gender, and Credit Card Default", x = "Age (Years)",
+       y = "Count", tag = "C")
+
+
+# Plot 4 --------------------------------------------------------------------------
+ggplot(data=CreditCard_plot, aes(x=LIMIT_BAL, colour=default.payment.next.month)) +
+  stat_density(geom="line",position="identity") + 
+  stat_density(geom="line", aes(color = "default.payment.next.month")) +
+  labs(title = "Density of Limit Balance and Credit Card Default", 
+       x = "Limit Balance (NTD)", y = "Density", tag = "D") + 
+  scale_colour_discrete(name="Default", breaks=c("0", "1", "default.payment.next.month"),
+                         labels=c("No", "Yes", "All (Yes and No)"))
+## Comment: Light blue line, which represents the density of credit card default, 
+##          has a high peak at limit balance about 10000 NTD. It might tell us 
+##          that credit card might be too easy to approve without careful 
+##          considerations of applicants' credit score.
+
+# Plot 5 --------------------------------------------------------------------------
+ggplot(data=CreditCard_plot, aes(MARRIAGE, fill = default.payment.next.month)) +
+  labs(title = "Stacked Bar Chart of Marital Status and Credit Card Default",
+       subtitle = ("0: Missing Data; 1: Married; 2:Single; 3: Others"),
+       x = "Marital status", y = "Density", tag = "E") + geom_histogram(bins = 7) + 
+  scale_fill_discrete(name="Default", breaks=c("0", "1"), labels=c("No", "Yes"))
+## Comment: Most of cardholders were married or single. 
+##          Single had less probabilities of credit card default by percentage.
+
+# Plot 6 --------------------------------------------------------------------------
+edu_count_table = as.data.frame(table(CreditCard_plot$EDUCATION))
+edu_count_table$Prob = edu_count_table$Freq / sum(edu_count_table$Freq)
+colnames(edu_count_table) = c("Edu", "Freq", "Prob" )
+
+ggplot(data=edu_count_table, aes(x="", y=Prob, fill=Edu)) +
+  geom_bar(width = 1, stat = "identity") + coord_polar("y", start=0) + 
+  labs(title = "Pie Chart of Eduction Level", y = "Probability", tag = "F") + 
+  scale_fill_discrete(name="Education Level", breaks=seq(0,6), 
+                        labels=c("Missing Data", "Graduate", "University", 
+                                 "High school", "Others", "Unknown", "Unknown"))
+## Comment: More than two-third cardholders have Bachelor's degree.
+```
+
+```{r}
+
+# Get default data
+default = CreditCard[CreditCard$default.payment.next.month == 1,]
+summary(default)
+
+# Define function to calculate default rate based on one factor
+DefaultRate = function(tab){
+  
+  names = colnames(tab) # Get column names of table
+  N = 2:6 # Get LIMIT_BAL, SEX, EDUCATION, MARRIAGE, AGE
+  DefaultRateList = list() # Initialize
+  
+  for ( i in 1:length(N)){
+    
+    factor = names[N[i]]
+    fre_cc = as.data.frame(table(CreditCard[factor]))
+    fre_de = as.data.frame(table(default[factor]))
+    
+    # Left join
+    fre_table = merge(fre_cc, fre_de, by='Var1', all.x=TRUE) 
+    
+    fre_table[is.na(fre_table)] = 0 # Replace NA as 0
+    colnames(fre_table) = c(factor, 'AllData', 'Default')
+    
+    # Get the default rate and count of no default
+    fre_table$NoDefault = fre_table$AllData - fre_table$Default 
+    fre_table$Rate = fre_table$Default / fre_table$AllData 
+    DefaultRateList[[i]] = as.matrix(fre_table)
+      
+  }
+  
+  return(DefaultRateList)
+}
+
+DefaultRateMat = DefaultRate(CreditCard)
+
+# Plot 7 --------------------------------------------------------------------------
+# Extract LIMIT_D_R default rate
+LimitBal_D_R = as.data.frame(DefaultRateMat[[1]])
+LimitBal_D_R$LIM_cut = cut(as.numeric(as.character(LimitBal_D_R$LIMIT_BAL)), 
+                           c((0:8)*130000), right = FALSE, 
+                           labels = c("0-130K", "130K-260K", "260K-390K",
+                                      "390K-520K", "520K-650K", "650K-780K",
+                                      "780K-910K", "910K-1040K")) # Categorize LIMIT_BAL
+LimitBal_D_R$Rate_cut = cut(as.numeric(as.character(LimitBal_D_R$Rate)), 
+                            c(seq(0,1.1,0.1)), right = FALSE) # Categorize Defualt Rate
+
+# Visualize the default of LIMIT_BAL
+LimitBal_D_R$Rate = as.numeric(as.character(LimitBal_D_R$Rate))
+LimitBal_D_R$LIMIT_BAL = as.numeric(as.character(LimitBal_D_R$LIMIT_BAL))
+ggplot(data=LimitBal_D_R, aes(x=LIMIT_BAL, y=Rate, color=Rate_cut)) + 
+  geom_point() + labs(title = "Probability of Default Rate Based on Limit Balance", 
+                      x = "Limit Balance (NTD)", y = "Probability", tag = "G") + 
+  scale_colour_discrete(name="Categorize Default Rate", 
+                        labels=c("Less than 10%", "10%-20%", "20%-30%", 
+                                 "30%-40%", "40%-50%", "50%-60%","More than 60%"))
+## Comment: The average of default rate is relatively low 
+##          when the balance limit is between 250,000 and 500,000. 
+##          The volatility of default rate is relatively high 
+##          when the balance limit is between 500,000 and 750,000.
+
+# Plot 8 --------------------------------------------------------------------------
+Edu_D_R = as.data.frame(DefaultRateMat[[3]])
+Edu_D_R$Rate = as.numeric(as.character(Edu_D_R$Rate))
+Edu_D_R$EDUCATION = c("MissingData", "Graduate", "University", 
+                                 "HighSchool", "Others", "Unknown1", "Unknown2")
+
+Edu_D_R_new = Edu_D_R[,c(1,3,4,5)] %>% gather(DefaultYN, Count, Default:NoDefault)
+Edu_D_R_new$Count = as.numeric(as.character(Edu_D_R_new$Count))
+ggplot(data=Edu_D_R_new, aes(x=EDUCATION, y=Count, fill=DefaultYN)) +
+  geom_bar(colour="black", stat="identity", position=position_dodge()) +
+  geom_text(aes(label=Count), position=position_dodge(width=0.9), vjust=-0.25, size=3) +
+  labs(title = "Count of Default and Non-Default Based on Education Level", 
+       x = "Education Level", y = "Count ", tag = "H") + theme_minimal() + 
+  scale_fill_brewer(palette="Paired", name="Default Yes or No", labels=c("Yes", "No")) 
+## Comment: Most of the cardholders have bachelor's degree or master's degree.
+
+ggplot(data=Edu_D_R, aes(x=EDUCATION, y=Rate)) + geom_jitter(aes(x=EDUCATION, y=Rate)) +
+  labs(title = "Scatter Plot of Default Rate and Education Level", 
+       x = "Education Level", y = "Count ", tag = "I")
+## Comment: Clients with higher education level has lower default rate.
+
+
+# Plot 9 --------------------------------------------------------------------------
+Age_D_R = as.data.frame(DefaultRateMat[[5]])
+
+# Convert format to numeric
+for (i in 1:length(Age_D_R)){
+  Age_D_R[,i] = as.numeric(as.character(Age_D_R[,i]))
+}
+ggplot(Age_D_R, aes(x=AGE, y=AllData, color=Rate)) + 
+  geom_point(aes(size=Rate)) +
+  labs(title = "Level of Default Rate Baesd on Age", 
+       x = "Age (Years)", y = "Count of All Data", tag = "J") + theme_minimal()
+## Comment: More people have credit card between age 22 and age 40. 
+##          The variance is higher for clients older than 60.
+```
+
+
+
+```{r}
 
 ftable(CreditCard$SEX, CreditCard$EDUCATION, CreditCard$MARRIAGE) 
 ## We can see some unknown data and 0 in this data set 
 ##### Note. can do predict for those missing data set as well, 
-##### but have not included in this assignment.
+##### but have not included in this project.
 
-summary(CreditCard)
-```
-
-
-```{r}
 # Data Cleaning 
 # Remove rows with Education=0,5,6 and MARRIAGE=0,3 and LIMIT_BAL,SEX,AGE=0
 without0 = apply(CreditCard,1, function(x) all(x[2:6]!=0) && x[4]!=5 && x[4]!=6 && x[5]!=3)
 CreditCard = CreditCard[without0,]
 ```
 
+There are 24 factors against amount of given credit. In order to aviod overfitting, I selected the 
+most important factors using forward stepwise selection.  
 
-```{r Set Data Sets and Factors Selection}
+**Algorithm: Forward Stepwise Selection**
+a. Let $\mathcal{M_0}$ denote the null model, which contains no predictors.
+b. For $k=0,1,\dots ,p-1$; $p$ is the number of predictors
+   b.1 Consider all $p-k$ models that augment the predictors in $\mathcal{M_k}$ with one additional predictor
+   b.2 Choose the best among these $p-k$ models, and call it $\mathcal{M_{k-1}}$. Here best is defined as 
+   having the smallest RSS, or equivalently largest $R^2$.
+c. Select a single best model fromamong $\mathcal{M_0}, \mathcal{M_1}, \dots,\mathcal{M_p}$ using 
+cross-validated prediction error, $Cp$, $AIC$, $BIC$, or adjusted $R^2$.
+
+At the step c, I chose Bayesian Information Criterion (BIC) for determining the cross-validated prediction error.
+The Bayesian Information Criterion (BIC) gives unnecessary variable much greater penalty, so it can more 
+efficient to aviod overfitting. 
+
+**Criteria: Bayesian Information Criterion**
+For the least squares model with d predictors up to irrelevant
+constants 
+$$BIC=\frac{1}{n}(RSS+d\hat{\sigma}^2\log n)$$
+Since $\log n > 2$ for $n > 7$, the BIC places a heavier penalty on models with many variables.
+
+$\mathcal{M_0}$
+## 2. Quantitative factors as responses
+Statistic Learning on LIMIT_BAL against other factors
+```{r}
 
 # Set up the 70% for train set and the rest of 30% for test set
 train = round(nrow(CreditCard) * 0.7,0)
@@ -70,13 +336,14 @@ CreditCard.train = CreditCard[train, ]
 CreditCard.test = CreditCard[-train, ]
 
 # Determine which parameters are more important using forward selection 
-library(leaps)
 Forward = regsubsets(LIMIT_BAL ~., data = CreditCard.train, method="forward", 
                      nvmax=length(CreditCard)-1)
 Forward.summary = summary(Forward)
 
 # Determine how many paramenters will be used using **Bayesian Information Criterion (BIC)**
-plot(Forward.summary$bic,type='b',col="blue", pch=19, xlab = "Number of Variables") 
+plot(Forward.summary$bic,type='b',col="blue", pch=19, xlab = "Number of Variables", 
+     ylab = "Cross-Validated Prediction Error", 
+     main = "Forward Stepwise Selection using BIC") 
 points(which.min(Forward.summary$bic), Forward.summary$bic[which.min(Forward.summary$bic)], 
        col="red", pch=19)
 
@@ -85,15 +352,16 @@ GetColumn = t(Forward.summary$which)[,which.min(Forward.summary$bic)]
 ## Remove LIMIT_BAL from column names because LIMIT_BAL is the response of regression
 NameCol = names(CreditCard)[-2] 
 NameCol[GetColumn[2:length(CreditCard)]] 
-## I pick 18 parameters, which has the minimum error using bic 
+## I pick 20 parameters, which has the minimum error using bic 
 
 ```
 
-```{r Algorithm for Q2}
+```{r}
+# Set the formula for part 2 of this project
+formulaQ2 = 
+  as.formula(LIMIT_BAL ~ .-ID-PAY_4-BILL_AMT6-default.payment.next.month)
 
-formulaQ2 = as.formula(LIMIT_BAL ~ .-ID-SEX-PAY_5-BILL_AMT3-BILL_AMT4-BILL_AMT6)
 # Logistic Regression
-# Based on most important 20 paramenters using **bic**
 fit.lm = lm(formulaQ2, data = CreditCard.train)
 # Predict 
 yhat.lm = predict(fit.lm, CreditCard.test)
@@ -104,8 +372,6 @@ paste("The test MSE using linear regession is", mse_lm)
 
 ##################################################################################
 # Lasso and Elastic-Net Regularized Generalized Linear Models
-library(glmnet)
-
 tryalpha = seq(0,1,0.1)
 x.train = model.matrix(formulaQ2, data = CreditCard.train)
 x.test = model.matrix(formulaQ2, data = CreditCard.test)
@@ -130,8 +396,6 @@ paste("The lowest test MSE using glmnet is",
 
 ##################################################################################
 # Tree
-library(tree)
-
 # Fit a regression tree to the training set
 fit.tree = tree(formulaQ2, data = CreditCard.train)
 
@@ -147,8 +411,6 @@ print (paste("The test MSE using tree is", round(mse.tree,4) ))
 
 ##################################################################################
 # Random Forest
-library(randomForest)
-
 # Use the bagging approach
 trymtry = seq(10,16,2) # (which.min(Forward.summary$bic)-1)
 
@@ -164,15 +426,11 @@ for (i in 1:length(trymtry)){
 
 plot(trymtry, mse.bag, type = "b", xlab = "Number of variables", ylab = "Test MSE",
      main = "Test MSE using Bagging Approach")
-paste("The lowest test MSE using bagging is", 
-      min(mse.bag), "with mtry =", 
-      which.min(mse.bag), "as mtry is in [10, 15]")
+paste("The lowest test MSE using bagging is",  min(mse.bag))
 
 
 ##################################################################################
 # Generalized Boosted Regression Models
-library(gbm)
-
 # Give shrinkage parameters 'lambda'
 lambdas = 10^seq(0, 0.2, by = 0.001)
 test.err = rep(NA, length(lambdas))
@@ -193,38 +451,31 @@ mse_boosting = round(min(test.err), 4)
 paste("The test MSE using boosting is", mse_boosting)
 
 ```
+
+
 ```{r}
-# Multiple boosting libraries 
-# gbm: boosting with tree
-# mboost: model based boosting 
-# ada: statistical boosted based on additive logistic regression
-# gamBoost: for boosting generlized additive models
-library(caret) #  Classification And REgression Training) 
-library(rlang)
-library(doSNOW)
-
-fit.gbm.caret = train(formulaQ2, method="gbm",  data = CreditCard.train, verbose=FALSE)
-yhat.gbm = predict(fit.gbm.caret, newdata = CreditCard.test)
-qplot(yhat.gbm, LIMIT_BAL, CreditCard.test )
-
-ggplot(CreditCard.test) + aes(x = yhat.gbm, y = LIMIT_BAL) + geom_point() 
-```
-
-
-
-```{r Compared Accuracy for Q2}
-Q2_accuracy = data.frame("Test MSE"=c( mse_lm, min(mse_glmnet), 
+P2_accuracy = data.frame("Test MSE"=c( mse_lm, min(mse_glmnet), 
                                   mse.tree, min(mse.bag), mse_boosting))
-rownames(Q2_accuracy) = c("lm", "glmnet", "tree", "bag", "boosting")
-Q2_accuracy
+rownames(P2_accuracy) = c("lm", "glmnet", "tree", "bag", "boosting")
+P2_accuracy
 
 ```
 
-> I did machine leanring on this credit card dataset using five algorithms, including linear regression (lm), Lasso and Elastic-Net Regularized Generalized Linear Models (glmnet), tree, bagging, and boosting. From the test MSE table, we can see linear regression is not a good fit for our credit card dataset to predict limit balance, even shrinking the coefficients $\alpha$ from 0 to 1. Among these five algorithms, bagging approach has the lowest test MSE. It is because bagging approach (Bootstrap aggregation) can reduce the variance and hence decrease the prediction mean-squared errors of a statistical learning method. Also, it takes many training sets from the population and build a separate prediction model using each training set. Then we average the resulting predictions. Thus, the test MSE is lower than the one using tree method.
+I did machine leanring on this credit card dataset using five algorithms, including linear regression (lm), 
+lasso and elastic-net regularized generalized linear models (glmnet), classification tree, bagging, and boosting.
+From the test MSE table, we can see linear regression is not a good fit for our credit card dataset to predict 
+limit balance, even shrinking the coefficients $\alpha$ from 0 to 1. Among these five algorithms, bagging 
+approach has the lowest test MSE. It is because bagging approach (Bootstrap aggregation) can reduce the variance 
+and hence decrease the prediction mean-squared errors of a statistical learning method. Also, it takes many 
+training sets from the population and build a separate prediction model using each training set. Then we average 
+the resulting predictions. Thus, the test MSE is lower than the test MSE using a single.
 
-> And then, I do the same process on default.payment.next.month against others factors.
+## 3. Qualitative factors as responses
 
-```{r Predictor Selection}
+And then, I did the same process on whether clients default payment next month  (default.payment.next.month) 
+against others factors.
+
+```{r}
 
 # Determine which parameters are more important using forward selection 
 Forward = regsubsets(default.payment.next.month ~., data = CreditCard.train, 
@@ -232,7 +483,10 @@ Forward = regsubsets(default.payment.next.month ~., data = CreditCard.train,
 Forward.summary = summary(Forward)
 
 # Determine how many paramenters will be used using **Bayesian Information Criterion (BIC)**
-plot(Forward.summary$bic,type='b',col="blue", pch=19, xlab = "Number of Variables") 
+plot(Forward.summary$bic,type='b',col="blue", pch=19, 
+     xlab = "Number of Variables", 
+     ylab = "Cross-Validated Prediction Error", 
+     main = "Forward Stepwise Selection using BIC") 
 points(which.min(Forward.summary$bic), 
        Forward.summary$bic[which.min(Forward.summary$bic)], 
        col="red", pch=19)
@@ -240,18 +494,22 @@ points(which.min(Forward.summary$bic),
 # List all improtant parameters using BIC
 names(CreditCard) [t(Forward.summary$which)[,which.min(Forward.summary$bic)]
                    [2:length(CreditCard)]] 
-## I pick 8 parameters, which has the minimum error using bic 
+## I picked 6 parameters, which has the minimum error using bic 
 ```
 
 
-```{r Algorithm for Q3}
+```{r}
 
+# Set formula for part 3 of this project
+formulaQ3 = 
+  as.formula(default.payment.next.month~MARRIAGE+PAY_0+PAY_2+PAY_3+
+                  BILL_AMT1+PAY_AMT1)
+
+######################################################################################
 # Generalized Linear Model with Logistic Regression
-fit.glm = glm(default.payment.next.month~LIMIT_BAL+MARRIAGE+AGE+PAY_0+PAY_2+PAY_3+
-                  BILL_AMT1+PAY_AMT1, data = CreditCard.train, family = binomial)
+fit.glm = glm(formulaQ3, data = CreditCard.train, family = binomial)
 
-fit.glm = glm(default.payment.next.month~MARRIAGE+PAY_0+PAY_2+PAY_5+
-                  BILL_AMT1+PAY_AMT1, data = CreditCard.train, family = binomial)
+fit.glm = glm(formulaQ3, data = CreditCard.train, family = binomial)
 
 # Predict 
 pred.prob = predict(fit.glm, CreditCard.test, type = "response")
@@ -269,17 +527,14 @@ Accuracy = sum(pred.table[1,1], pred.table[2,2]) / sum(pred.table[,])
 # Total Error Rate: (FP + FN)/(P + N)
 TotalError = sum(pred.table[1,2],pred.table[2,1]) / sum(pred.table[,])
 
-glm.Confusion = data.frame(Sensitivity, Specificity, Accuracy, TotalError)
+glm.Confusion = round(data.frame(Sensitivity, Specificity, Accuracy, TotalError),4)
 row.names(glm.Confusion) = "GLM"
 
-paste("The accuracy using Logistic regression is", round(Accuracy,4))
+paste("The accuracy using Logistic regression is", Accuracy,4)
 
 ######################################################################################
 # Linear Discriminant Analysis (LDA)
-library(MASS)
-
-fit.lda = lda(default.payment.next.month~LIMIT_BAL+MARRIAGE+AGE+PAY_0+PAY_2+PAY_3+
-                  BILL_AMT1+PAY_AMT1, data = CreditCard.train)
+fit.lda = lda(formulaQ3, data = CreditCard.train)
 
 # Predict default.payment.next.month in tesing data set
 pred.prob.lda = predict(fit.lda, CreditCard.test)
@@ -297,15 +552,14 @@ Accuracy = sum(pred.table.lda[1,1],pred.table.lda[2,2]) / sum(pred.table.lda[,])
 # Total Error Rate: (FP + FN)/(P + N)
 TotalError = sum(pred.table.lda[1,2],pred.table.lda[2,1]) / sum(pred.table.lda[,])
 
-lda.Confusion = data.frame(Sensitivity, Specificity, Accuracy, TotalError)
+lda.Confusion = round(data.frame(Sensitivity, Specificity, Accuracy, TotalError),4)
 row.names(lda.Confusion) = "LDA"
 
-paste("The accuracy using LDA is", round(Accuracy,4))
+paste("The accuracy using LDA is", Accuracy)
 
 ######################################################################################
 # Quadratic discriminant analysis (QDA)
-fit.qda = qda(default.payment.next.month~LIMIT_BAL+MARRIAGE+AGE+PAY_0+PAY_2+PAY_3+
-                  BILL_AMT1+PAY_AMT1, data = CreditCard.train)
+fit.qda = qda(formulaQ3, data = CreditCard.train)
 
 # Predict default.payment.next.month in tesing data set
 pred.prob.qda = predict(fit.qda, CreditCard.test)
@@ -332,11 +586,8 @@ paste("The accuracy using QDA is", Accuracy)
 
 ######################################################################################
 # K-nearest neighbors algorithm
-library(class)
-library(data.table)
-library(dplyr)
-
-CreditCard.bic = select(CreditCard, LIMIT_BAL,MARRIAGE,AGE,PAY_0,PAY_2,PAY_3,BILL_AMT1,PAY_AMT1)
+CreditCard.bic = dplyr::select(CreditCard, MARRIAGE, AGE, PAY_0, PAY_2, 
+                               PAY_3, BILL_AMT1, PAY_AMT1, PAY_AMT2)
 
 # Set up the 70% for train set and the rest of 30% for test set
 train = round(nrow(CreditCard) * 0.7,0)
@@ -347,7 +598,7 @@ CreditCard.bic.test = CreditCard.bic[-train, ]
 pred.tables.knn = table(NULL)
 Accuracy.knn.table = table(NULL)
 for(K in 6:25){
-  set.seed(personal)
+  
   pred.knn = knn(CreditCard.bic.train, CreditCard.bic.test, 
                  CreditCard.train$default.payment.next.month, k = K)
   pred.table.knn = table(pred.knn, CreditCard.test$default.payment.next.month)
@@ -378,16 +629,14 @@ rownames(Accuracy.knn.table) = c("K=6", "K=7", "K=8", "K=9", "K=10", "K=11", "K=
 colnames(Accuracy.knn.table) = "Accurancy"
 
 # Plot the accuracy as K = [6,25]
-plot(x=seq(6,25), y=Accuracy.knn.table, xlab = "K", ylab = "Accuracy (%)",
-     main = "Accuracy using KNN")
+plot(x=seq(6,25), y=Accuracy.knn.table, xlab = "Number of K", 
+     ylab = "Accuracy (%)", main = "Accuracy using KNN")
 paste("The highest accuracy using KNN is", max(Accuracy.knn.table), " with K =",
       which.max(Accuracy.knn.table))
 
 ######################################################################################
-# Generalized Additive Model
-library(gam)
-fit.gam = gam(default.payment.next.month~LIMIT_BAL+MARRIAGE+AGE+PAY_0+PAY_2+PAY_3+
-                  BILL_AMT1+PAY_AMT1, data = CreditCard.train)
+# Generalized Additive Modelz
+fit.gam = gam(formulaQ3, data = CreditCard.train)
 
 # Predict the out-of-state tuition using test set
 pred.prob.gam = predict(fit.gam, CreditCard.test)
@@ -396,13 +645,12 @@ pred.gam[pred.gam > 0.5] = 1
 pred.table.gam = table(pred.gam, CreditCard.test$default.payment.next.month)
 pred.table.gam
 pred.table.gam.Accuracy = round(pred.table.gam[1] / length(pred.prob.gam),4)
-paste("The accuracy of Generalized Additive Model is", pred.table.gam.Accuracy)
+paste("The accuracy of generalized additive model is", pred.table.gam.Accuracy)
 
 ######################################################################################
 # Tree
 # Fit a regression tree to the training set
-fit.tree = tree(default.payment.next.month~LIMIT_BAL+MARRIAGE+AGE+PAY_0+PAY_2+PAY_3+
-                  BILL_AMT1+PAY_AMT1, data = CreditCard.train)
+fit.tree = tree(formulaQ3, data = CreditCard.train)
 
 # Plot the tree
 plot(fit.tree)
@@ -427,10 +675,10 @@ Accuracy = sum(pred.table.tree[1,1], pred.table.tree[2,2]) / sum(pred.table.tree
 # Total Error Rate: (FP + FN)/(P + N)
 TotalError = sum(pred.table.tree[1,2], pred.table.tree[2,1]) / sum(pred.table.tree[,])
 
-tree.Confusion = data.frame(Sensitivity, Specificity, Accuracy, TotalError)
+tree.Confusion = round(data.frame(Sensitivity, Specificity, Accuracy, TotalError),4)
 row.names(tree.Confusion) = "Tree"
 
-paste("The accuracy of Tree is", round(Accuracy,4))
+paste("The accuracy of Tree is", Accuracy)
 
 ######################################################################################
 # Random Forest:
@@ -443,10 +691,8 @@ paste("The accuracy of Tree is", round(Accuracy,4))
 ######################################################################################
 # Lasso and Elastic-Net Regularized Generalized Linear Models
 # Fit a regression tree to the training set
-x.train = model.matrix(default.payment.next.month~LIMIT_BAL+MARRIAGE+AGE+PAY_0+PAY_2+PAY_3+
-                  BILL_AMT1+PAY_AMT1, data = CreditCard.train)
-x.test = model.matrix(default.payment.next.month~LIMIT_BAL+MARRIAGE+AGE+PAY_0+PAY_2+PAY_3+
-                  BILL_AMT1+PAY_AMT1, data = CreditCard.test)
+x.train = model.matrix(formulaQ3, data = CreditCard.train)
+x.test = model.matrix(formulaQ3, data = CreditCard.test)
 
 tryalpha = seq(0,1,0.1)
 acc_glmnet = rep(NA, length(tryalpha))
@@ -471,7 +717,7 @@ for (i in 1:length(tryalpha)){
   TotalError = sum(pred.table.glmnet[1,2], pred.table.glmnet[2,1]) / sum(pred.table.glmnet[,])
 
   glmnet.Confusion = data.frame(Sensitivity, Specificity, Accuracy, TotalError)
-  acc_glmnet[i] = glmnet.Confusion$Accuracy
+  acc_glmnet[i] = round(glmnet.Confusion$Accuracy,4)
 }
 plot(tryalpha, acc_glmnet, xlab = "Alpha", ylab = "Accuracy (%)", 
      main = "Accuracy using Regularized Generalized Linear Models")
@@ -482,16 +728,41 @@ paste("The highest accuracy using glmnet is",
 
 ```
 
-```{r Compared Accuracy for Q3}
+```{r}
 
-Q3_accuracy = data.frame("Accuracy"= c( glm.Confusion$Accuracy, lda.Confusion$Accuracy,
+P3_accuracy = data.frame("Accuracy"= c( glm.Confusion$Accuracy, lda.Confusion$Accuracy,
                               qda.Confusion$Accuracy, max(Accuracy.knn.table),
                               pred.table.gam.Accuracy, tree.Confusion$Accuracy,
                               max(acc_glmnet)))
-rownames(Q3_accuracy) = c("glm", "lda", "qda", "KNN", "gam", "tree", "glmnet" )
-Q3_accuracy
+rownames(P3_accuracy) = c("glm", "lda", "qda", "KNN", "gam", "tree", "glmnet" )
+P3_accuracy
 
 # From these seven algorithms, Tree has the highest accuracy. 
 ```
 
-> I did machine leanring on this credit card dataset using seven algorithms, including generalized linear model (glm), Linear and Quadratic Discriminant Analysis, k-nearest neighbors, Generalized additive model, tree, and Lasso and Elastic-Net Regularized Generalized Linear Models. From the accuracy table, the possibility of credit card default next month against other factors is near linear relation and has clear feature on repayment status of the previous two months. Thus, the accuracy of decision tree is the highest, and lda is the second highest.
+In part 3, I did machine leanring on this credit card dataset using seven algorithms, including generalized 
+linear model (glm), linear and quadratic discriminant analysis, k-nearest neighbors, generalized additive model, 
+classification tree, and Lasso and elastic-net regularized generalized linear models. From the accuracy table, 
+the possibility of credit card default next month against other factors is near linear relation based on high 
+accuracy of generalized linear model. Additionally, it has clear feature on repayment status of the previous 
+two months. Thus, the accuracy of classification tree is the highest, and lda is the second highest.
+
+## Conclusion
+1. More credit card defualt for limit balance about 10000. It might mean that credit card might be too easy to 
+be issued for people who have low credit scores. The variance of the default rate for limit balance over 
+500,000 NTD is higher than other range of limit balance.
+
+2. It is lower default rate for cardholders have higher education level. Moreover, the default rate for clients 
+whose age over 60 was higher than mid age and young people.
+
+3. The best fit algorithm for predicting limit balance is bagging approach.
+
+4. The best fit algorithm for predicting whether a client default next month is classification tree.
+
+
+## Reference
+1. https://bradzzz.gitbooks.io/ga-dsi-seattle/content/dsi/dsi_05_classification_databases/2.1-lesson/assets/datasets/DefaultCreditCardClients_yeh_2009.pdf
+
+2. https://gerardnico.com/data_mining/stepwise_regression
+
+3. http://www-math.mit.edu/~rmd/650/bic.pdf
